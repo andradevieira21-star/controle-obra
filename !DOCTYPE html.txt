@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="theme-color" content="#16242B" />
+<title>Canteiro — Controle de Obra</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>html,body{margin:0;background:#F2F1EC;}#root{min-height:100vh;}</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ============================================================
+//  CONFIGURAÇÃO — cole aqui os 2 dados do seu Supabase
+//  (Project Settings → API → Project URL e a chave "anon public")
+// ============================================================
+const SUPABASE_URL = "https://zurnapriwabaxjbppkje.supabase.co/rest/v1/";   // <-- TROCAR
+const SUPABASE_ANON_KEY = "sb_publishable_XN275sSqyq1nW3lTY6UxGA_Xg_lYR67";            // <-- TROCAR
+// ============================================================
+
+const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const fmt = (n) => BRL.format(isFinite(n) ? n : 0);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const hoje = () => new Date().toISOString().slice(0, 10);
+const dataBR = (iso) => { if (!iso) return ""; const [a, m, d] = iso.split("-"); return `${d}/${m}/${a}`; };
+const parseValor = (s) => {
+  if (typeof s === "number") return s; if (!s) return 0;
+  const limpo = String(s).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(limpo); return isFinite(n) ? n : 0;
+};
+
+const CATEGORIAS_SEED = [
+  "Demolição e alvenaria", "Elétrica", "Hidráulica", "Piso e revestimento",
+  "Marcenaria", "Iluminação", "Pintura", "Gesso e forro",
+  "Vidros e esquadrias", "Marmoraria", "Climatização", "Mão de obra geral",
+].map((nome) => ({ id: uid(), nome, fornecedor: "", orcado: 0 }));
+const FORMAS = ["Pix", "Cartão", "Dinheiro", "Boleto", "Transferência", "Parcelado"];
+const DEFAULT = { projeto: { nome: "Apê Novo", endereco: "" }, pins: { admin: "", kezia: "" }, cats: CATEGORIAS_SEED, lancs: [] };
+
+const configurado = !SUPABASE_URL.includes("SEU-PROJETO") && !SUPABASE_ANON_KEY.includes("SUA_ANON");
+const sb = configurado ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+.cnt * { box-sizing: border-box; margin: 0; padding: 0; }
+.cnt {
+  --paper:#F2F1EC; --ink:#16242B; --ink2:#5A6B72; --line:#DFDDD3;
+  --card:#FFFFFF; --teal:#1C5C52; --teal-soft:#E4EEEA; --amber:#B5642C;
+  --amber-soft:#F6E7DA; --blue:#2C4A66; --shadow:0 1px 2px rgba(20,40,46,.05),0 6px 24px rgba(20,40,46,.06);
+  font-family:'Inter',system-ui,sans-serif; color:var(--ink);
+  background:var(--paper); min-height:100vh; line-height:1.45; -webkit-font-smoothing:antialiased;
+}
+.cnt .mono, .cnt h1,.cnt h2,.cnt h3,.cnt .num { font-family:'Space Grotesk','Inter',sans-serif; font-feature-settings:"tnum"; }
+.cnt .num { font-variant-numeric: tabular-nums; }
+.cnt button { font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; }
+.cnt input,.cnt select,.cnt textarea { font-family:inherit; font-size:15px; }
+.cnt .wrap { max-width:960px; margin:0 auto; padding:0 18px 96px; }
+.cnt .top { position:sticky; top:0; z-index:20; background:rgba(242,241,236,.88); backdrop-filter:blur(10px); border-bottom:1px solid var(--line); }
+.cnt .topin { max-width:960px; margin:0 auto; padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.cnt .brand { display:flex; align-items:baseline; gap:10px; min-width:0; }
+.cnt .logo { font-family:'Space Grotesk'; font-weight:700; font-size:19px; letter-spacing:-.02em; }
+.cnt .logo b { color:var(--teal); }
+.cnt .proj { font-size:13px; color:var(--ink2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cnt .who { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.cnt .chip { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:5px 11px; border-radius:999px; background:var(--teal-soft); color:var(--teal); }
+.cnt .chip.k { background:#EDE8F2; color:#5B4A78; }
+.cnt .lnk { font-size:13px; color:var(--ink2); padding:5px 8px; border-radius:7px; }
+.cnt .lnk:hover { background:#0000000a; color:var(--ink); }
+.cnt .tabs { display:flex; gap:4px; margin:22px 0 20px; background:var(--card); padding:5px; border-radius:13px; border:1px solid var(--line); box-shadow:var(--shadow); }
+.cnt .tab { flex:1; padding:9px 6px; border-radius:9px; font-size:14px; font-weight:600; color:var(--ink2); transition:.15s; white-space:nowrap; }
+.cnt .tab.on { background:var(--ink); color:#fff; }
+.cnt .tab:not(.on):hover { background:#00000008; color:var(--ink); }
+.cnt .card { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); }
+.cnt .pad { padding:20px; }
+.cnt .hero { display:grid; grid-template-columns:auto 1fr; gap:24px; align-items:center; }
+@media(max-width:560px){ .cnt .hero { grid-template-columns:1fr; justify-items:center; text-align:center; } }
+.cnt .ringwrap { position:relative; width:148px; height:148px; }
+.cnt .ringwrap .pct { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.cnt .pct .big { font-family:'Space Grotesk'; font-weight:700; font-size:34px; letter-spacing:-.03em; }
+.cnt .pct .lbl { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink2); }
+.cnt .kpis { display:grid; grid-template-columns:1fr 1fr; gap:14px; width:100%; }
+.cnt .kpi .k-lbl { font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink2); }
+.cnt .kpi .k-val { font-family:'Space Grotesk'; font-weight:600; font-size:20px; letter-spacing:-.02em; margin-top:3px; font-variant-numeric:tabular-nums; }
+.cnt .kpi .k-val.t { color:var(--teal); } .cnt .kpi .k-val.a { color:var(--amber); }
+.cnt .eye { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink2); font-weight:600; display:flex; align-items:center; gap:8px; }
+.cnt .eye::after { content:""; flex:1; height:1px; background:var(--line); }
+.cnt .sec-h { display:flex; align-items:center; justify-content:space-between; margin:30px 0 14px; }
+.cnt .sec-h h2 { font-size:17px; font-weight:600; letter-spacing:-.01em; }
+.cnt .catline { padding:15px 0; border-bottom:1px solid var(--line); }
+.cnt .catline:last-child { border-bottom:none; }
+.cnt .cattop { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:9px; }
+.cnt .catname { font-weight:600; font-size:15px; }
+.cnt .catsub { font-size:12px; color:var(--ink2); }
+.cnt .catnum { font-family:'Space Grotesk'; font-size:13px; color:var(--ink2); font-variant-numeric:tabular-nums; }
+.cnt .catnum b { color:var(--ink); font-weight:600; }
+.cnt .bar { height:9px; border-radius:999px; background:#EAE8E0; overflow:hidden; position:relative; }
+.cnt .bar > i { position:absolute; left:0; top:0; bottom:0; border-radius:999px; transition:width .5s cubic-bezier(.2,.8,.2,1); }
+.cnt .bar > i.ok { background:var(--teal); }
+.cnt .bar > i.over { background:var(--amber); }
+.cnt .bar > i.free { background:repeating-linear-gradient(45deg,var(--teal) 0 6px,#2f6f64 6px 12px); opacity:.5; }
+.cnt .tagover { font-size:11px; font-weight:700; color:var(--amber); background:var(--amber-soft); padding:2px 8px; border-radius:999px; letter-spacing:.02em; }
+.cnt label.fld { display:block; margin-bottom:14px; }
+.cnt .fld span { display:block; font-size:12px; font-weight:600; color:var(--ink2); margin-bottom:6px; letter-spacing:.02em; }
+.cnt .inp { width:100%; padding:12px 13px; border:1px solid var(--line); border-radius:11px; background:#FBFBF8; color:var(--ink); outline:none; transition:.15s; }
+.cnt .inp:focus { border-color:var(--teal); background:#fff; box-shadow:0 0 0 3px var(--teal-soft); }
+.cnt .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+@media(max-width:560px){ .cnt .grid2 { grid-template-columns:1fr; } }
+.cnt .btn { padding:13px 18px; border-radius:12px; font-weight:600; font-size:15px; transition:.15s; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+.cnt .btn.pri { background:var(--ink); color:#fff; width:100%; }
+.cnt .btn.pri:hover { background:#0c1a1f; } .cnt .btn.pri:active { transform:translateY(1px); }
+.cnt .btn.sm { padding:8px 13px; font-size:13px; border:1px solid var(--line); background:#fff; }
+.cnt .btn.sm:hover { border-color:var(--ink2); }
+.cnt .btn.gho { font-size:13px; color:var(--ink2); padding:6px 10px; }
+.cnt .btn.gho:hover { color:var(--amber); }
+.cnt .hist { display:flex; align-items:center; gap:13px; padding:13px 0; border-bottom:1px solid var(--line); }
+.cnt .hist:last-child { border-bottom:none; }
+.cnt .dot { width:9px; height:9px; border-radius:50%; background:var(--teal); flex-shrink:0; }
+.cnt .h-mid { flex:1; min-width:0; }
+.cnt .h-desc { font-weight:600; font-size:14px; }
+.cnt .h-meta { font-size:12px; color:var(--ink2); margin-top:2px; }
+.cnt .h-val { font-family:'Space Grotesk'; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.cnt .login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+.cnt .loginbox { width:100%; max-width:380px; text-align:center; }
+.cnt .loginbox .logo { font-size:30px; margin-bottom:6px; }
+.cnt .loginbox .sub { color:var(--ink2); font-size:14px; margin-bottom:28px; }
+.cnt .profiles { display:grid; grid-template-columns:1fr 1fr; gap:13px; }
+.cnt .prof { padding:24px 14px; border-radius:16px; border:1px solid var(--line); background:var(--card); box-shadow:var(--shadow); transition:.15s; }
+.cnt .prof:hover { transform:translateY(-2px); border-color:var(--teal); }
+.cnt .av { width:52px; height:52px; border-radius:50%; margin:0 auto 12px; display:flex; align-items:center; justify-content:center; font-family:'Space Grotesk'; font-weight:700; font-size:21px; color:#fff; }
+.cnt .prof .nm { font-weight:600; font-size:16px; } .cnt .prof .rl { font-size:12px; color:var(--ink2); margin-top:2px; }
+.cnt .pinrow { display:flex; gap:8px; justify-content:center; margin:18px 0; }
+.cnt .pinrow input { width:46px; height:54px; text-align:center; font-size:22px; font-family:'Space Grotesk'; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.cnt .pinrow input:focus { border-color:var(--teal); outline:none; box-shadow:0 0 0 3px var(--teal-soft); }
+.cnt .ovl { position:fixed; inset:0; background:rgba(16,30,36,.4); backdrop-filter:blur(3px); z-index:50; display:flex; align-items:center; justify-content:center; padding:18px; }
+.cnt .modal { background:var(--card); border-radius:18px; width:100%; max-width:440px; box-shadow:0 20px 60px rgba(0,0,0,.25); max-height:90vh; overflow:auto; }
+.cnt .modal-h { padding:18px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+.cnt .modal-h h3 { font-size:17px; }
+.cnt .empty { text-align:center; padding:38px 20px; color:var(--ink2); }
+.cnt .empty .em-t { font-weight:600; color:var(--ink); margin-bottom:5px; }
+.cnt .toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:12px 20px; border-radius:12px; font-size:14px; font-weight:500; z-index:60; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+.cnt .center { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; }
+.cnt .center .box { max-width:460px; }
+.cnt .center code { background:#0000000d; padding:2px 6px; border-radius:5px; font-size:13px; }
+@media(prefers-reduced-motion:reduce){ .cnt * { transition:none !important; } }
+`;
+
+function Ring({ pct, over }) {
+  const r = 64, c = 2 * Math.PI * r;
+  const p = Math.min(pct, 100); const off = c - (p / 100) * c;
+  return (
+    <div className="ringwrap">
+      <svg width="148" height="148" viewBox="0 0 148 148">
+        <circle cx="74" cy="74" r={r} fill="none" stroke="#EAE8E0" strokeWidth="13" />
+        <circle cx="74" cy="74" r={r} fill="none" stroke={over ? "var(--amber)" : "var(--teal)"}
+          strokeWidth="13" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off}
+          transform="rotate(-90 74 74)" style={{ transition: "stroke-dashoffset .7s cubic-bezier(.2,.8,.2,1)" }} />
+      </svg>
+      <div className="pct"><span className="big">{Math.round(pct)}%</span><span className="lbl">pago</span></div>
+    </div>
+  );
+}
+
+function App() {
+  const [fase, setFase] = useState("loading"); // loading | config | erro | ok
+  const [erroMsg, setErroMsg] = useState("");
+  const [user, setUser] = useState(null);
+  const [tab, setTab] = useState("painel");
+  const [toast, setToast] = useState("");
+
+  const [projeto, setProjeto] = useState(DEFAULT.projeto);
+  const [pins, setPins] = useState(DEFAULT.pins);
+  const [cats, setCats] = useState(DEFAULT.cats);
+  const [lancs, setLancs] = useState(DEFAULT.lancs);
+  const revRef = useRef(null);
+
+  const flash = (m) => { setToast(m); setTimeout(() => setToast(""), 2200); };
+  const aplicar = (d) => { setProjeto(d.projeto || DEFAULT.projeto); setPins(d.pins || DEFAULT.pins); setCats(d.cats || []); setLancs(d.lancs || []); };
+
+  // carregar do servidor
+  useEffect(() => {
+    if (!configurado) { setFase("config"); return; }
+    (async () => {
+      try {
+        const { data, error } = await sb.from("obra_estado").select("dados,updated_at").eq("id", 1).maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          const { data: ins, error: e2 } = await sb.from("obra_estado").insert({ id: 1, dados: DEFAULT }).select("updated_at").single();
+          if (e2) throw e2;
+          revRef.current = ins.updated_at; aplicar(DEFAULT);
+        } else { revRef.current = data.updated_at; aplicar(data.dados); }
+        setFase("ok");
+      } catch (e) {
+        setErroMsg(e.message || "Falha ao conectar."); setFase("erro");
+      }
+    })();
+  }, []);
+
+  // sincronização (foco da aba + a cada 15s)
+  useEffect(() => {
+    if (fase !== "ok") return;
+    const sync = async () => {
+      if (document.hidden) return;
+      try {
+        const { data } = await sb.from("obra_estado").select("dados,updated_at").eq("id", 1).maybeSingle();
+        if (data && data.updated_at !== revRef.current) { revRef.current = data.updated_at; aplicar(data.dados); }
+      } catch (e) { /* offline momentâneo */ }
+    };
+    const t = setInterval(sync, 15000);
+    document.addEventListener("visibilitychange", sync);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", sync); };
+  }, [fase]);
+
+  const persist = async (over) => {
+    const next = {
+      projeto: over.projeto ?? projeto, pins: over.pins ?? pins,
+      cats: over.cats ?? cats, lancs: over.lancs ?? lancs,
+    };
+    try {
+      const { data, error } = await sb.from("obra_estado")
+        .update({ dados: next, updated_at: new Date().toISOString() }).eq("id", 1).select("updated_at").single();
+      if (error) throw error;
+      revRef.current = data.updated_at;
+    } catch (e) { flash("Sem conexão — não salvou. Tente de novo."); }
+  };
+
+  const pagoPorCat = useMemo(() => { const m = {}; for (const l of lancs) m[l.catId] = (m[l.catId] || 0) + l.valor; return m; }, [lancs]);
+  const totalOrcado = useMemo(() => cats.reduce((s, c) => s + (c.orcado || 0), 0), [cats]);
+  const totalPago = useMemo(() => lancs.reduce((s, l) => s + l.valor, 0), [lancs]);
+  const saldo = totalOrcado - totalPago;
+  const pctGeral = totalOrcado > 0 ? (totalPago / totalOrcado) * 100 : 0;
+  const estouro = totalPago > totalOrcado && totalOrcado > 0;
+  const isAdmin = user === "admin";
+
+  if (fase === "config") return (
+    <div className="cnt"><style>{CSS}</style><div className="center"><div className="box">
+      <div className="logo" style={{ fontFamily: "'Space Grotesk'", fontSize: 30, fontWeight: 700 }}>Canteiro<b style={{ color: "var(--teal)" }}>.</b></div>
+      <p style={{ marginTop: 16, color: "var(--ink2)" }}>Falta conectar o banco. Abra o arquivo <code>index.html</code> e cole o <b>Project URL</b> e a <b>chave anon</b> do seu Supabase nas duas linhas marcadas no topo do script.</p>
+    </div></div></div>
+  );
+  if (fase === "erro") return (
+    <div className="cnt"><style>{CSS}</style><div className="center"><div className="box">
+      <div style={{ fontSize: 30 }}>⚠</div>
+      <p style={{ marginTop: 12, fontWeight: 600 }}>Não consegui conectar ao banco</p>
+      <p style={{ marginTop: 8, color: "var(--ink2)", fontSize: 14 }}>{erroMsg}</p>
+      <p style={{ marginTop: 12, color: "var(--ink2)", fontSize: 13 }}>Confira a URL/chave e se a tabela <code>obra_estado</code> e as policies foram criadas.</p>
+    </div></div></div>
+  );
+  if (fase === "loading") return (
+    <div className="cnt"><style>{CSS}</style><div className="center" style={{ color: "var(--ink2)" }}>Abrindo o canteiro…</div></div>
+  );
+  if (!user) return <Login pins={pins} onEnter={setUser} flash={flash} />;
+
+  return (
+    <div className="cnt"><style>{CSS}</style>
+      <div className="top"><div className="topin">
+        <div className="brand"><span className="logo">Canteiro<b>.</b></span>
+          <span className="proj">{projeto.nome}{projeto.endereco ? ` · ${projeto.endereco}` : ""}</span></div>
+        <div className="who"><span className={"chip" + (isAdmin ? "" : " k")}>{isAdmin ? "Wellingthon" : "Kézia"} · {isAdmin ? "Admin" : "Edição"}</span>
+          <button className="lnk" onClick={() => setUser(null)}>Sair</button></div>
+      </div></div>
+      <div className="wrap">
+        <div className="tabs">
+          {[["painel", "Painel"], ["lancar", "Lançar"], ["orcamentos", "Orçamentos"], ["historico", "Histórico"], ["ajustes", "Ajustes"]]
+            .map(([k, t]) => <button key={k} className={"tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{t}</button>)}
+        </div>
+        {tab === "painel" && <Painel {...{ pctGeral, estouro, totalOrcado, totalPago, saldo, cats, pagoPorCat, lancs, setTab }} />}
+        {tab === "lancar" && <Lancar cats={cats} user={user} onAdd={(l) => {
+          let catId = l.catId, cArr = cats;
+          if (l.novoCat) { const nc = { id: uid(), nome: l.novoCat, fornecedor: "", orcado: 0 }; cArr = [...cats, nc]; setCats(cArr); catId = nc.id; }
+          const novo = [{ id: uid(), catId, valor: l.valor, desc: l.desc, data: l.data, forma: l.forma, por: user, criadoEm: Date.now() }, ...lancs];
+          setLancs(novo); persist({ cats: cArr, lancs: novo });
+          flash(l.novoCat ? "Categoria criada e lançada ✓" : "Pagamento lançado ✓"); setTab("painel");
+        }} />}
+        {tab === "orcamentos" && <Orcamentos {...{ cats, pagoPorCat, isAdmin,
+          onSave: (c) => { setCats(c); persist({ cats: c }); flash("Orçamentos atualizados ✓"); } }} />}
+        {tab === "historico" && <Historico {...{ lancs, cats, user, isAdmin,
+          onDel: (id) => { const n = lancs.filter((l) => l.id !== id); setLancs(n); persist({ lancs: n }); flash("Lançamento removido"); } }} />}
+        {tab === "ajustes" && <Ajustes {...{ projeto, pins, user, isAdmin, flash,
+          onProj: (p) => { setProjeto(p); persist({ projeto: p }); flash("Salvo ✓"); },
+          onPin: (p) => { setPins(p); persist({ pins: p }); flash("PIN atualizado ✓"); },
+          onReset: () => { setCats(CATEGORIAS_SEED); setLancs([]); persist({ cats: CATEGORIAS_SEED, lancs: [] }); flash("Dados zerados"); } }} />}
+      </div>
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+function Login({ pins, onEnter, flash }) {
+  const [sel, setSel] = useState(null);
+  const [pin, setPin] = useState(["", "", "", ""]);
+  const need = sel ? pins[sel] : "";
+  const tryEnter = (who) => { if (!pins[who]) onEnter(who); else setSel(who); };
+  const onPin = (i, v) => {
+    if (!/^\d?$/.test(v)) return;
+    const np = [...pin]; np[i] = v; setPin(np);
+    if (v && i < 3) document.getElementById("pin" + (i + 1))?.focus();
+    if (np.join("").length === 4) {
+      if (np.join("") === need) onEnter(sel);
+      else { flash("PIN incorreto"); setPin(["", "", "", ""]); document.getElementById("pin0")?.focus(); }
+    }
+  };
+  return (
+    <div className="cnt"><style>{CSS}</style><div className="login"><div className="loginbox">
+      <div className="logo">Canteiro<b style={{ color: "var(--teal)" }}>.</b></div>
+      <div className="sub">Controle da obra do apê</div>
+      {!sel ? (
+        <div className="profiles">
+          <button className="prof" onClick={() => tryEnter("admin")}><div className="av" style={{ background: "var(--teal)" }}>W</div><div className="nm">Wellingthon</div><div className="rl">Admin</div></button>
+          <button className="prof" onClick={() => tryEnter("kezia")}><div className="av" style={{ background: "#5B4A78" }}>K</div><div className="nm">Kézia</div><div className="rl">Edição</div></button>
+        </div>
+      ) : (
+        <div>
+          <div className="sub" style={{ marginBottom: 4 }}>PIN de {sel === "admin" ? "Wellingthon" : "Kézia"}</div>
+          <div className="pinrow">{pin.map((v, i) => <input key={i} id={"pin" + i} value={v} inputMode="numeric" maxLength={1} type="password" onChange={(e) => onPin(i, e.target.value)} autoFocus={i === 0} />)}</div>
+          <button className="lnk" onClick={() => { setSel(null); setPin(["", "", "", ""]); }}>← Voltar</button>
+        </div>
+      )}
+    </div></div></div>
+  );
+}
+
+function Painel({ pctGeral, estouro, totalOrcado, totalPago, saldo, cats, pagoPorCat, lancs, setTab }) {
+  const ordered = [...cats].sort((a, b) => (pagoPorCat[b.id] || 0) - (pagoPorCat[a.id] || 0));
+  const recentes = lancs.slice(0, 5);
+  const semOrcamento = totalOrcado === 0;
+  return (
+    <>
+      <div className="card pad hero">
+        <Ring pct={pctGeral} over={estouro} />
+        <div className="kpis">
+          <div className="kpi"><div className="k-lbl">Orçamento total</div><div className="k-val num">{fmt(totalOrcado)}</div></div>
+          <div className="kpi"><div className="k-lbl">Total pago</div><div className="k-val t num">{fmt(totalPago)}</div></div>
+          <div className="kpi"><div className="k-lbl">{saldo < 0 ? "Estouro" : "Falta pagar"}</div><div className={"k-val num" + (saldo < 0 ? " a" : "")}>{fmt(Math.abs(saldo))}</div></div>
+          <div className="kpi"><div className="k-lbl">Lançamentos</div><div className="k-val num">{lancs.length}</div></div>
+        </div>
+      </div>
+      {estouro && (
+        <div className="card pad" style={{ marginTop: 14, borderColor: "var(--amber)", background: "var(--amber-soft)" }}>
+          <div style={{ fontWeight: 600, color: "var(--amber)" }}>⚠ A obra passou do orçamento previsto</div>
+          <div style={{ fontSize: 13, color: "var(--ink2)", marginTop: 4 }}>Pago {fmt(totalPago)} contra {fmt(totalOrcado)} orçados. Reveja os orçamentos abaixo.</div>
+        </div>
+      )}
+      <div className="sec-h"><h2>Por categoria</h2><button className="btn gho" onClick={() => setTab("orcamentos")}>Editar orçamentos →</button></div>
+      {semOrcamento ? (
+        <div className="card empty"><div className="em-t">Defina seus orçamentos primeiro</div>Vá em <b>Orçamentos</b> e coloque o valor previsto de cada categoria.</div>
+      ) : (
+        <div className="card pad">
+          {ordered.map((c) => {
+            const pago = pagoPorCat[c.id] || 0;
+            const semOrc = !c.orcado;
+            const pct = c.orcado > 0 ? (pago / c.orcado) * 100 : (pago > 0 ? 100 : 0);
+            const over = pago > c.orcado && c.orcado > 0;
+            return (
+              <div key={c.id} className="catline">
+                <div className="cattop">
+                  <div><span className="catname">{c.nome}</span>{c.fornecedor && <span className="catsub"> · {c.fornecedor}</span>}</div>
+                  {semOrc ? <span className="catsub">sem orçamento</span> : over ? <span className="tagover">+{fmt(pago - c.orcado)}</span> : <span className="catnum"><b>{Math.round(pct)}%</b></span>}
+                </div>
+                <div className="bar"><i className={semOrc ? "free" : over ? "over" : "ok"} style={{ width: (semOrc ? (pago > 0 ? 100 : 0) : Math.min(pct, 100)) + "%" }} /></div>
+                <div className="catnum" style={{ marginTop: 7 }}><b>{fmt(pago)}</b>{semOrc ? " pago" : " de " + fmt(c.orcado)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="sec-h"><h2>Últimos lançamentos</h2>{lancs.length > 5 && <button className="btn gho" onClick={() => setTab("historico")}>Ver tudo →</button>}</div>
+      {recentes.length === 0 ? (
+        <div className="card empty"><div className="em-t">Nenhum gasto lançado ainda</div>Use a aba <b>Lançar</b> assim que pagar o primeiro fornecedor.</div>
+      ) : (
+        <div className="card pad">{recentes.map((l) => { const cat = cats.find((c) => c.id === l.catId); return (
+          <div key={l.id} className="hist"><div className="dot" /><div className="h-mid"><div className="h-desc">{l.desc || cat?.nome || "Pagamento"}</div><div className="h-meta">{cat?.nome} · {dataBR(l.data)} · {l.forma}{l.por === "kezia" ? " · Kézia" : ""}</div></div><div className="h-val">{fmt(l.valor)}</div></div>
+        ); })}</div>
+      )}
+    </>
+  );
+}
+
+function Lancar({ cats, onAdd }) {
+  const NOVA = "__nova__";
+  const [catId, setCatId] = useState(cats[0]?.id || NOVA);
+  const [novoNome, setNovoNome] = useState("");
+  const [valor, setValor] = useState("");
+  const [desc, setDesc] = useState("");
+  const [data, setData] = useState(hoje());
+  const [forma, setForma] = useState("Pix");
+  const v = parseValor(valor);
+  const criando = catId === NOVA;
+  const podeEnviar = v > 0 && (criando ? novoNome.trim().length > 0 : !!catId);
+  const submit = () => {
+    if (!podeEnviar) return;
+    if (criando) onAdd({ novoCat: novoNome.trim(), valor: v, desc: desc.trim(), data, forma });
+    else onAdd({ catId, valor: v, desc: desc.trim(), data, forma });
+    setValor(""); setDesc(""); setNovoNome("");
+  };
+  return (
+    <div className="card pad" style={{ maxWidth: 520, margin: "0 auto" }}>
+      <div className="eye" style={{ marginBottom: 18 }}>Novo pagamento</div>
+      <label className="fld"><span>Categoria</span>
+        <select className="inp" value={catId} onChange={(e) => setCatId(e.target.value)}>
+          {cats.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+          <option value={NOVA}>➕ Nova categoria…</option>
+        </select></label>
+      {criando && <label className="fld"><span>Nome da nova categoria</span><input className="inp" value={novoNome} placeholder="Ex: Frete, Taxa de obra, Móveis soltos…" onChange={(e) => setNovoNome(e.target.value)} autoFocus /></label>}
+      <label className="fld"><span>Valor pago</span><input className="inp num" value={valor} inputMode="decimal" placeholder="R$ 0,00" onChange={(e) => setValor(e.target.value)} />{v > 0 && <div style={{ fontSize: 12, color: "var(--teal)", marginTop: 5, fontWeight: 600 }}>{fmt(v)}</div>}</label>
+      <label className="fld"><span>Descrição (opcional)</span><input className="inp" value={desc} placeholder="Ex: 1ª parcela marcenaria" onChange={(e) => setDesc(e.target.value)} /></label>
+      <div className="grid2">
+        <label className="fld"><span>Data</span><input className="inp" type="date" value={data} onChange={(e) => setData(e.target.value)} /></label>
+        <label className="fld"><span>Forma</span><select className="inp" value={forma} onChange={(e) => setForma(e.target.value)}>{FORMAS.map((f) => <option key={f}>{f}</option>)}</select></label>
+      </div>
+      <button className="btn pri" onClick={submit} disabled={!podeEnviar} style={{ opacity: podeEnviar ? 1 : .5 }}>{criando ? "Criar categoria e lançar" : "Lançar pagamento"}</button>
+    </div>
+  );
+}
+
+function Orcamentos({ cats, pagoPorCat, isAdmin, onSave }) {
+  const [edit, setEdit] = useState(null);
+  const salvar = (cat) => {
+    let novo;
+    if (cat.id && cats.some((c) => c.id === cat.id)) novo = cats.map((c) => c.id === cat.id ? cat : c);
+    else novo = [...cats, { ...cat, id: uid() }];
+    onSave(novo); setEdit(null);
+  };
+  const excluir = (id) => { onSave(cats.filter((c) => c.id !== id)); setEdit(null); };
+  return (
+    <>
+      <div className="sec-h"><h2>Orçamentos</h2>{isAdmin && <button className="btn sm" onClick={() => setEdit({ nome: "", fornecedor: "", orcado: 0 })}>+ Categoria</button>}</div>
+      {!isAdmin && <div style={{ fontSize: 13, color: "var(--ink2)", marginBottom: 12 }}>Somente o Admin edita orçamentos. Você pode lançar pagamentos na aba <b>Lançar</b>.</div>}
+      <div className="card pad">{cats.map((c) => { const pago = pagoPorCat[c.id] || 0; const over = pago > c.orcado && c.orcado > 0; return (
+        <div key={c.id} className="catline" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}><div className="catname">{c.nome}</div><div className="catnum" style={{ marginTop: 3 }}>Orçado <b>{fmt(c.orcado)}</b> · Pago <b style={{ color: over ? "var(--amber)" : "var(--teal)" }}>{fmt(pago)}</b>{c.fornecedor ? ` · ${c.fornecedor}` : ""}</div></div>
+          {isAdmin && <button className="btn sm" onClick={() => setEdit(c)}>Editar</button>}
+        </div>
+      ); })}</div>
+      {edit && <EditCat cat={edit} onSave={salvar} onDel={excluir} onClose={() => setEdit(null)} />}
+    </>
+  );
+}
+
+function EditCat({ cat, onSave, onDel, onClose }) {
+  const [nome, setNome] = useState(cat.nome || "");
+  const [forn, setForn] = useState(cat.fornecedor || "");
+  const [orc, setOrc] = useState(cat.orcado ? String(cat.orcado).replace(".", ",") : "");
+  const novo = !cat.id;
+  return (
+    <div className="ovl" onClick={onClose}><div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-h"><h3>{novo ? "Nova categoria" : "Editar categoria"}</h3><button className="lnk" onClick={onClose}>✕</button></div>
+      <div className="pad">
+        <label className="fld"><span>Nome</span><input className="inp" value={nome} onChange={(e) => setNome(e.target.value)} autoFocus /></label>
+        <label className="fld"><span>Fornecedor (opcional)</span><input className="inp" value={forn} onChange={(e) => setForn(e.target.value)} /></label>
+        <label className="fld"><span>Valor orçado</span><input className="inp num" value={orc} inputMode="decimal" placeholder="R$ 0,00" onChange={(e) => setOrc(e.target.value)} /></label>
+        <button className="btn pri" disabled={!nome.trim()} style={{ opacity: nome.trim() ? 1 : .5 }} onClick={() => onSave({ ...cat, nome: nome.trim(), fornecedor: forn.trim(), orcado: parseValor(orc) })}>{novo ? "Adicionar" : "Salvar"}</button>
+        {!novo && <button className="btn gho" style={{ width: "100%", marginTop: 10 }} onClick={() => { if (confirm("Excluir esta categoria? Os lançamentos dela ficam órfãos.")) onDel(cat.id); }}>Excluir categoria</button>}
+      </div>
+    </div></div>
+  );
+}
+
+function Historico({ lancs, cats, user, isAdmin, onDel }) {
+  const [filtro, setFiltro] = useState("");
+  const lista = filtro ? lancs.filter((l) => l.catId === filtro) : lancs;
+  return (
+    <>
+      <div className="sec-h"><h2>Histórico</h2></div>
+      <label className="fld"><span>Filtrar por categoria</span><select className="inp" value={filtro} onChange={(e) => setFiltro(e.target.value)}><option value="">Todas as categorias</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select></label>
+      {lista.length === 0 ? (
+        <div className="card empty"><div className="em-t">Nada por aqui ainda</div>Lance o primeiro pagamento na aba Lançar.</div>
+      ) : (
+        <div className="card pad">{lista.map((l) => { const cat = cats.find((c) => c.id === l.catId); const podeApagar = isAdmin || l.por === user; return (
+          <div key={l.id} className="hist"><div className="dot" /><div className="h-mid"><div className="h-desc">{l.desc || cat?.nome || "Pagamento"}</div><div className="h-meta">{cat?.nome} · {dataBR(l.data)} · {l.forma}{l.por === "kezia" ? " · Kézia" : " · Wellingthon"}</div></div><div className="h-val">{fmt(l.valor)}</div>{podeApagar && <button className="btn gho" style={{ marginLeft: 4 }} onClick={() => { if (confirm("Remover este lançamento?")) onDel(l.id); }}>✕</button>}</div>
+        ); })}</div>
+      )}
+    </>
+  );
+}
+
+function Ajustes({ projeto, pins, user, isAdmin, onProj, onPin, onReset, flash }) {
+  const [nome, setNome] = useState(projeto.nome);
+  const [end, setEnd] = useState(projeto.endereco);
+  const [pin, setPin] = useState(pins[user] || "");
+  return (
+    <>
+      <div className="sec-h"><h2>Ajustes</h2></div>
+      {isAdmin && (
+        <div className="card pad" style={{ marginBottom: 14 }}>
+          <div className="eye" style={{ marginBottom: 16 }}>Projeto</div>
+          <label className="fld"><span>Nome</span><input className="inp" value={nome} onChange={(e) => setNome(e.target.value)} /></label>
+          <label className="fld"><span>Endereço (opcional)</span><input className="inp" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
+          <button className="btn sm" onClick={() => onProj({ nome: nome.trim() || "Apê Novo", endereco: end.trim() })}>Salvar projeto</button>
+        </div>
+      )}
+      <div className="card pad" style={{ marginBottom: 14 }}>
+        <div className="eye" style={{ marginBottom: 16 }}>Seu PIN de acesso</div>
+        <div style={{ fontSize: 13, color: "var(--ink2)", marginBottom: 12 }}>Opcional. 4 dígitos. Deixe em branco para entrar sem PIN.</div>
+        <label className="fld"><input className="inp num" value={pin} inputMode="numeric" maxLength={4} placeholder="••••" onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} style={{ maxWidth: 130, letterSpacing: 6 }} /></label>
+        <button className="btn sm" onClick={() => { if (pin && pin.length !== 4) return flash("O PIN precisa ter 4 dígitos"); onPin({ ...pins, [user]: pin }); }}>Salvar PIN</button>
+      </div>
+      {isAdmin && (
+        <div className="card pad" style={{ borderColor: "var(--amber)" }}>
+          <div className="eye" style={{ marginBottom: 12 }}>Zona de risco</div>
+          <button className="btn gho" onClick={() => { if (confirm("Apagar TODOS os orçamentos e lançamentos? Não dá pra desfazer.")) onReset(); }}>Zerar todos os dados</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
