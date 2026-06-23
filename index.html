@@ -7,8 +7,8 @@
 <title>Canteiro — Controle de Obra</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js" crossorigin></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <style>html,body{margin:0;background:#F2F1EC;}#root{min-height:100vh;}</style>
 </head>
 <body>
@@ -21,9 +21,11 @@ const { useState, useEffect, useMemo, useRef } = React;
 //  CONFIGURAÇÃO — cole aqui os 2 dados do seu Supabase
 //  (Project Settings → API → Project URL e a chave "anon public")
 // ============================================================
-const SUPABASE_URL = "https://zurnapriwabaxjbppkje.supabase.co";   // <-- TROCAR
-const SUPABASE_ANON_KEY = "sb_publishable_XN275sSqyq1nW3lTY6UxGA_Xg_lYR67";            // <-- TROCAR
+const SUPABASE_URL_RAW = "https://zurnapriwabaxjbppkje.supabase.co";  // <-- seu Project URL
+const SUPABASE_ANON_KEY = "sb_publishable_XN275sSqyq1nW3lTY6UxGA_Xg_lYR67";  // <-- sua chave pública
 // ============================================================
+// limpa /rest/v1 ou barra final caso venha colado por engano
+const SUPABASE_URL = SUPABASE_URL_RAW.replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const fmt = (n) => BRL.format(isFinite(n) ? n : 0);
@@ -45,7 +47,8 @@ const FORMAS = ["Pix", "Cartão", "Dinheiro", "Boleto", "Transferência", "Parce
 const DEFAULT = { projeto: { nome: "Apê Novo", endereco: "" }, pins: { admin: "", kezia: "" }, cats: CATEGORIAS_SEED, lancs: [] };
 
 const configurado = !SUPABASE_URL.includes("SEU-PROJETO") && !SUPABASE_ANON_KEY.includes("SUA_ANON");
-const sb = configurado ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const libsOk = !!(window.React && window.ReactDOM && window.supabase);
+const sb = (configurado && libsOk) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
@@ -511,7 +514,15 @@ function Ajustes({ projeto, pins, user, isAdmin, onProj, onPin, onReset, flash }
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+const _root = document.getElementById("root");
+const _erro = (titulo, msg) => { _root.innerHTML = '<div style="font-family:sans-serif;max-width:520px;margin:60px auto;padding:24px;color:#16242B"><h3 style="margin:0 0 8px">' + titulo + '</h3><p style="color:#5A6B72;font-size:14px;margin:0">' + msg + '</p></div>'; };
+if (!libsOk) {
+  _erro("Bibliotecas não carregaram", "A página não conseguiu baixar React/Supabase (CDN bloqueado, extensão do navegador, ou sem internet). Recarregue; se persistir, me avise.");
+} else {
+  try { ReactDOM.createRoot(_root).render(<App />); _root.dataset.booted = "1"; }
+  catch (e) { _erro("Erro ao abrir o app", (e && e.message) ? e.message : String(e)); }
+}
+window.addEventListener("error", (e) => { if (_root && !_root.dataset.booted) _erro("Algo travou ao abrir o app", (e && e.message) ? e.message : String(e)); });
 </script>
 </body>
 </html>
